@@ -206,26 +206,28 @@ class JoyArmNode(Node):
             if len(msg.axes) > max(self.ROLL_AXIS, self.PITCH_AXIS):
                 self.joy_angular[0] = self._apply_deadzone(msg.axes[self.ROLL_AXIS])
                 self.joy_angular[1] = self._apply_deadzone(msg.axes[self.PITCH_AXIS])
+
+            # Handle gripper buttons (rising edge detection) - only when enabled
+            if len(msg.buttons) > max(self.gripper_close_button, self.gripper_open_button):
+                if len(self.prev_buttons) == len(msg.buttons):
+                    # Close gripper on button press
+                    if (msg.buttons[self.gripper_close_button] == 1 and
+                            self.prev_buttons[self.gripper_close_button] == 0):
+                        self.get_logger().info("Gripper close requested")
+                        self.send_gripper_goal(self.GRIPPER_CLOSED)
+
+                    # Open gripper on button press
+                    if (msg.buttons[self.gripper_open_button] == 1 and
+                            self.prev_buttons[self.gripper_open_button] == 0):
+                        self.get_logger().info("Gripper open requested")
+                        self.send_gripper_goal(self.GRIPPER_OPEN)
         else:
             # Clear velocities when disabled
             self.joy_linear = np.zeros(3)
             self.joy_angular = np.zeros(2)
 
-        # Handle gripper buttons (rising edge detection)
-        if len(msg.buttons) > max(self.gripper_close_button, self.gripper_open_button):
-            if len(self.prev_buttons) == len(msg.buttons):
-                # Close gripper on button press
-                if (msg.buttons[self.gripper_close_button] == 1 and
-                        self.prev_buttons[self.gripper_close_button] == 0):
-                    self.get_logger().info("Gripper close requested")
-                    self.send_gripper_goal(self.GRIPPER_CLOSED)
-
-                # Open gripper on button press
-                if (msg.buttons[self.gripper_open_button] == 1 and
-                        self.prev_buttons[self.gripper_open_button] == 0):
-                    self.get_logger().info("Gripper open requested")
-                    self.send_gripper_goal(self.GRIPPER_OPEN)
-
+        # Always update prev_buttons for edge detection (outside is_enabled check)
+        if len(msg.buttons) > 0:
             self.prev_buttons = list(msg.buttons)
 
     def _apply_deadzone(self, value: float) -> float:
@@ -269,11 +271,6 @@ class JoyArmNode(Node):
     def get_current_pose(self) -> Pose:
         """Get current end-effector pose from TF."""
         try:
-            # Debug: print available frames periodically
-            if not hasattr(self, '_debug_printed') or not self._debug_printed:
-                self.get_logger().info(f"Available frames:\n{self.tf_buffer.all_frames_as_string()}")
-                self._debug_printed = True
-
             transform = self.tf_buffer.lookup_transform(
                 self.BASE_FRAME,
                 self.EE_FRAME,
@@ -399,7 +396,7 @@ class JoyArmNode(Node):
 
         position_constraint.constraint_region.primitive_poses.append(target_pose_for_region)
         position_constraint.constraint_region.primitives.append(
-            SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.001])  # 1mm tolerance
+            SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.01])  # 1cm tolerance
         )
 
         constraints.position_constraints.append(position_constraint)
@@ -409,9 +406,9 @@ class JoyArmNode(Node):
         orientation_constraint.header.frame_id = self.PLANNING_FRAME
         orientation_constraint.link_name = self.EE_FRAME
         orientation_constraint.orientation = target_pose.orientation
-        orientation_constraint.absolute_x_axis_tolerance = 0.01
-        orientation_constraint.absolute_y_axis_tolerance = 0.01
-        orientation_constraint.absolute_z_axis_tolerance = 0.01
+        orientation_constraint.absolute_x_axis_tolerance = 0.1
+        orientation_constraint.absolute_y_axis_tolerance = 0.1
+        orientation_constraint.absolute_z_axis_tolerance = 0.1
         orientation_constraint.weight = 1.0
         constraints.orientation_constraints.append(orientation_constraint)
 
@@ -428,6 +425,9 @@ class JoyArmNode(Node):
         goal_msg.planning_options.replan = False
 
         # Send goal asynchronously
+        self.get_logger().info(
+            f"Sending IK goal: pos=({target_pose.position.x:.3f}, "
+            f"{target_pose.position.y:.3f}, {target_pose.position.z:.3f})")
         future = self.move_action_client.send_goal_async(
             goal_msg,
             feedback_callback=self._move_feedback_callback
@@ -438,11 +438,12 @@ class JoyArmNode(Node):
         """Handle MoveGroup goal response."""
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().debug("Move goal rejected")
+            self.get_logger().info("Move goal rejected")
             self.goal_in_progress = False
             self.current_goal_handle = None
             return
 
+        self.get_logger().info("Move goal accepted")
         self.current_goal_handle = goal_handle
 
         # Get result
@@ -455,8 +456,10 @@ class JoyArmNode(Node):
         self.current_goal_handle = None
 
         result = future.result()
-        if result.result.error_code.val != 1:  # SUCCESS = 1
-            self.get_logger().debug(
+        if result.result.error_code.val == 1:  # SUCCESS = 1
+            self.get_logger().info("Move completed successfully")
+        else:
+            self.get_logger().info(
                 f"Move failed with error code: {result.result.error_code.val}")
 
     def _move_feedback_callback(self, feedback_msg):
