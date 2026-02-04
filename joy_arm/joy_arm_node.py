@@ -70,6 +70,40 @@ class JoyArmNode(Node):
     ROLL_AXIS = 3
     PITCH_AXIS = 4
 
+    # MoveIt error code mapping
+    ERROR_CODES = {
+        1: "SUCCESS",
+        99999: "FAILURE",
+        -1: "PLANNING_FAILED",
+        -2: "INVALID_MOTION_PLAN",
+        -3: "MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE",
+        -4: "CONTROL_FAILED",
+        -5: "UNABLE_TO_AQUIRE_SENSOR_DATA",
+        -6: "TIMED_OUT",
+        -7: "PREEMPTED",
+        -10: "START_STATE_IN_COLLISION",
+        -11: "START_STATE_VIOLATES_PATH_CONSTRAINTS",
+        -12: "START_STATE_INVALID",
+        -13: "GOAL_IN_COLLISION",
+        -14: "GOAL_VIOLATES_PATH_CONSTRAINTS",
+        -15: "GOAL_CONSTRAINTS_VIOLATED",
+        -16: "GOAL_STATE_INVALID",
+        -17: "UNRECOGNIZED_GOAL_TYPE",
+        -18: "FRAME_TRANSFORM_FAILURE",
+        -19: "COLLISION_CHECKING_UNAVAILABLE",
+        -20: "ROBOT_STATE_STALE",
+        -21: "SENSOR_INFO_STALE",
+        -22: "COMMUNICATION_FAILURE",
+        -23: "CRASH",
+        -24: "ABORT",
+        -31: "INVALID_GOAL_CONSTRAINTS",
+        -32: "INVALID_GROUP_NAME",
+        -33: "INVALID_OBJECT_NAME",
+        -34: "INVALID_ROBOT_STATE",
+        -35: "INVALID_LINK_NAME",
+        -36: "NO_IK_SOLUTION",
+    }
+
     def __init__(self):
         super().__init__('joy_arm_node')
 
@@ -376,9 +410,10 @@ class JoyArmNode(Node):
         request.max_velocity_scaling_factor = self.max_velocity_scaling
         request.max_acceleration_scaling_factor = self.max_acceleration_scaling
 
-        # Use Pilz PTP planner for speed
-        request.pipeline_id = "pilz"
-        request.planner_id = "PTP"
+        # Use OMPL planner (default, more compatible with constraint-based goals)
+        # Note: Pilz planner ("pilz_industrial_motion_planner") requires different goal format
+        request.pipeline_id = "ompl"
+        request.planner_id = "RRTConnect"
 
         # Create goal constraints
         constraints = Constraints()
@@ -396,7 +431,7 @@ class JoyArmNode(Node):
 
         position_constraint.constraint_region.primitive_poses.append(target_pose_for_region)
         position_constraint.constraint_region.primitives.append(
-            SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.01])  # 1cm tolerance
+            SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.02])  # 2cm tolerance
         )
 
         constraints.position_constraints.append(position_constraint)
@@ -406,16 +441,17 @@ class JoyArmNode(Node):
         orientation_constraint.header.frame_id = self.PLANNING_FRAME
         orientation_constraint.link_name = self.EE_FRAME
         orientation_constraint.orientation = target_pose.orientation
-        orientation_constraint.absolute_x_axis_tolerance = 0.1
-        orientation_constraint.absolute_y_axis_tolerance = 0.1
-        orientation_constraint.absolute_z_axis_tolerance = 0.1
+        orientation_constraint.absolute_x_axis_tolerance = 0.5
+        orientation_constraint.absolute_y_axis_tolerance = 0.5
+        orientation_constraint.absolute_z_axis_tolerance = 0.5
         orientation_constraint.weight = 1.0
         constraints.orientation_constraints.append(orientation_constraint)
 
         request.goal_constraints.append(constraints)
 
-        # Start state (empty = current)
+        # Start state: use is_diff=True to indicate "use current state"
         request.start_state = RobotState()
+        request.start_state.is_diff = True
 
         goal_msg.request = request
 
@@ -456,11 +492,13 @@ class JoyArmNode(Node):
         self.current_goal_handle = None
 
         result = future.result()
-        if result.result.error_code.val == 1:  # SUCCESS = 1
+        error_code = result.result.error_code.val
+        error_name = self.ERROR_CODES.get(error_code, f"UNKNOWN({error_code})")
+
+        if error_code == 1:  # SUCCESS
             self.get_logger().info("Move completed successfully")
         else:
-            self.get_logger().info(
-                f"Move failed with error code: {result.result.error_code.val}")
+            self.get_logger().info(f"Move failed: {error_name}")
 
     def _move_feedback_callback(self, feedback_msg):
         """Handle MoveGroup feedback."""
