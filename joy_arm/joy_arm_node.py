@@ -260,6 +260,11 @@ class JoyArmNode(Node):
     def get_current_pose(self) -> Pose:
         """Get current end-effector pose from TF."""
         try:
+            # Debug: print available frames periodically
+            if not hasattr(self, '_debug_printed') or not self._debug_printed:
+                self.get_logger().info(f"Available frames:\n{self.tf_buffer.all_frames_as_string()}")
+                self._debug_printed = True
+
             transform = self.tf_buffer.lookup_transform(
                 self.BASE_FRAME,
                 self.EE_FRAME,
