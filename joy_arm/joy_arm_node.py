@@ -6,11 +6,12 @@ Control mapping:
 - axes[5] == -1: Enable control mode (trigger)
 - axes[0]: X movement (end-effector frame)
 - axes[1]: Y movement (end-effector frame)
-- axes[2]: Z movement (end-effector frame)
 - axes[3]: Roll
 - axes[4]: Pitch
 - button[0]: Close gripper
 - button[1]: Open gripper
+- button[-2]: Z up (second to last)
+- button[-1]: Z down (last)
 """
 
 import rclpy
@@ -75,7 +76,7 @@ class JoyArmNode(Node):
     ENABLE_AXIS = 5  # axes[5] == -1 to enable
     X_AXIS = 0
     Y_AXIS = 1
-    Z_AXIS = 2
+    # Z controlled by buttons (axes[2] is a trigger with rest=1, not suitable)
     ROLL_AXIS = 3
     PITCH_AXIS = 4
 
@@ -213,6 +214,7 @@ class JoyArmNode(Node):
         self.get_logger().info(f"  EE link: {self.EE_FRAME}")
         self.get_logger().info(f"  Control rate: {self.control_rate} Hz")
         self.get_logger().info(f"  Enable: axes[{self.ENABLE_AXIS}] == -1")
+        self.get_logger().info(f"  Z: last two buttons (up=second-to-last, down=last)")
 
     def _setup_tf(self):
         """Setup TF2 with namespaced topics."""
@@ -273,11 +275,21 @@ class JoyArmNode(Node):
             self.is_enabled = False
 
         if self.is_enabled:
-            # Read position axes with deadzone
-            if len(msg.axes) > max(self.X_AXIS, self.Y_AXIS, self.Z_AXIS):
+            # Read position axes with deadzone (X and Y from sticks)
+            if len(msg.axes) > max(self.X_AXIS, self.Y_AXIS):
                 self.joy_linear[0] = self._apply_deadzone(msg.axes[self.X_AXIS])
                 self.joy_linear[1] = self._apply_deadzone(msg.axes[self.Y_AXIS])
-                self.joy_linear[2] = self._apply_deadzone(msg.axes[self.Z_AXIS])
+
+            # Z controlled by last two buttons (held = continuous motion)
+            if len(msg.buttons) >= 2:
+                z_up_idx = len(msg.buttons) - 2   # Second to last
+                z_down_idx = len(msg.buttons) - 1  # Last
+                z_val = 0.0
+                if msg.buttons[z_up_idx]:
+                    z_val += 1.0
+                if msg.buttons[z_down_idx]:
+                    z_val -= 1.0
+                self.joy_linear[2] = z_val
 
             # Read orientation axes with deadzone
             if len(msg.axes) > max(self.ROLL_AXIS, self.PITCH_AXIS):
