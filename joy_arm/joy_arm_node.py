@@ -19,7 +19,8 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
-from sensor_msgs.msg import Joy
+from sensor_msgs.msg import Joy, JointState
+from control_msgs.msg import JointTrajectoryControllerState
 from geometry_msgs.msg import Pose, Point, Quaternion
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
@@ -50,6 +51,7 @@ class JoyArmNode(Node):
     NAMESPACE = "j100_0819"
     JOY_TOPIC = f"/{NAMESPACE}/joy_teleop/joy"
     MOVE_ACTION = f"/{NAMESPACE}/move_action"
+    ARM_STATE_TOPIC = f"/{NAMESPACE}/manipulators/arm_0_joint_trajectory_controller/state"
 
     # Frame names
     BASE_FRAME = "arm_0_base_link"
@@ -138,6 +140,7 @@ class JoyArmNode(Node):
         self.prev_buttons = []
         self.goal_in_progress = False
         self.current_goal_handle = None
+        self.current_joint_state = None  # Current arm joint state for IK seed
 
         # Callback group for concurrent execution
         self.cb_group = ReentrantCallbackGroup()
@@ -150,6 +153,15 @@ class JoyArmNode(Node):
             Joy,
             self.JOY_TOPIC,
             self.joy_callback,
+            10,
+            callback_group=self.cb_group
+        )
+
+        # Subscribe to arm controller state (for IK seed)
+        self.arm_state_sub = self.create_subscription(
+            JointTrajectoryControllerState,
+            self.ARM_STATE_TOPIC,
+            self.arm_state_callback,
             10,
             callback_group=self.cb_group
         )
@@ -283,6 +295,20 @@ class JoyArmNode(Node):
             return 0.0
         return value
 
+    def arm_state_callback(self, msg: JointTrajectoryControllerState):
+        """Store current arm joint state for use as IK seed."""
+        # Log once when we first receive joint state
+        if self.current_joint_state is None:
+            self.get_logger().info(f"Received arm joint state: {list(msg.joint_names)}")
+
+        # Convert to JointState format for IK seed
+        joint_state = JointState()
+        joint_state.name = list(msg.joint_names)
+        joint_state.position = list(msg.actual.positions)
+        if msg.actual.velocities:
+            joint_state.velocity = list(msg.actual.velocities)
+        self.current_joint_state = joint_state
+
     def control_timer_callback(self):
         """Main control loop - runs at control_rate Hz."""
         if not self.is_enabled:
@@ -414,10 +440,23 @@ class JoyArmNode(Node):
 
         self.goal_in_progress = True
 
+        # Check if we have current joint state for IK seed
+        if self.current_joint_state is None:
+            self.get_logger().warning("No joint state received yet, cannot compute IK")
+            self.goal_in_progress = False
+            return
+
         # First, call IK service to get joint values
         ik_request = GetPositionIK.Request()
         ik_request.ik_request.group_name = self.ARM_GROUP
-        ik_request.ik_request.avoid_collisions = True
+        ik_request.ik_request.ik_link_name = self.EE_FRAME  # Specify end effector
+        ik_request.ik_request.avoid_collisions = False  # Don't check collisions for speed
+        ik_request.ik_request.timeout.sec = 0
+        ik_request.ik_request.timeout.nanosec = 100000000  # 100ms timeout
+
+        # Provide current joint state as seed for IK solver
+        ik_request.ik_request.robot_state.joint_state = self.current_joint_state
+        ik_request.ik_request.robot_state.is_diff = False
 
         # Set target pose
         pose_stamped = PoseStamped()
@@ -425,6 +464,11 @@ class JoyArmNode(Node):
         pose_stamped.header.stamp = self.get_clock().now().to_msg()
         pose_stamped.pose = target_pose
         ik_request.ik_request.pose_stamped = pose_stamped
+
+        self.get_logger().debug(
+            f"IK request: frame={self.PLANNING_FRAME}, link={self.EE_FRAME}, "
+            f"pos=({target_pose.position.x:.3f}, {target_pose.position.y:.3f}, {target_pose.position.z:.3f})"
+        )
 
         # Call IK service synchronously (with timeout)
         try:
