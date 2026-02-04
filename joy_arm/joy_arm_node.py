@@ -31,9 +31,7 @@ from moveit_msgs.msg import (
     MotionPlanRequest,
     PlanningOptions,
     RobotState,
-    WorkspaceParameters,
 )
-from std_msgs.msg import Header
 from shape_msgs.msg import SolidPrimitive
 from tf2_msgs.msg import TFMessage
 
@@ -411,17 +409,7 @@ class JoyArmNode(Node):
         # Let MoveIt use its default configured planner
         # Don't set pipeline_id or planner_id to use defaults
 
-        # Set workspace parameters (required for some planners)
         now = self.get_clock().now().to_msg()
-        request.workspace_parameters = WorkspaceParameters()
-        request.workspace_parameters.header.frame_id = self.PLANNING_FRAME
-        request.workspace_parameters.header.stamp = now
-        request.workspace_parameters.min_corner.x = -1.0
-        request.workspace_parameters.min_corner.y = -1.0
-        request.workspace_parameters.min_corner.z = -1.0
-        request.workspace_parameters.max_corner.x = 1.0
-        request.workspace_parameters.max_corner.y = 1.0
-        request.workspace_parameters.max_corner.z = 1.0
 
         # Create goal constraints
         constraints = Constraints()
@@ -459,7 +447,8 @@ class JoyArmNode(Node):
 
         request.goal_constraints.append(constraints)
 
-        # Don't set start_state - MoveIt will use current robot state by default
+        # Don't set start_state - let MoveIt use its current monitored state
+        # (same as gripper code which works)
 
         goal_msg.request = request
 
