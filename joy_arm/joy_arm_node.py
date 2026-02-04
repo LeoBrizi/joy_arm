@@ -86,25 +86,25 @@ class JoyArmNode(Node):
         -7: "PREEMPTED",
         -10: "START_STATE_IN_COLLISION",
         -11: "START_STATE_VIOLATES_PATH_CONSTRAINTS",
-        -12: "START_STATE_INVALID",
-        -13: "GOAL_IN_COLLISION",
-        -14: "GOAL_VIOLATES_PATH_CONSTRAINTS",
-        -15: "GOAL_CONSTRAINTS_VIOLATED",
-        -16: "GOAL_STATE_INVALID",
-        -17: "UNRECOGNIZED_GOAL_TYPE",
-        -18: "FRAME_TRANSFORM_FAILURE",
-        -19: "COLLISION_CHECKING_UNAVAILABLE",
-        -20: "ROBOT_STATE_STALE",
-        -21: "SENSOR_INFO_STALE",
-        -22: "COMMUNICATION_FAILURE",
-        -23: "CRASH",
-        -24: "ABORT",
-        -31: "INVALID_GOAL_CONSTRAINTS",
-        -32: "INVALID_GROUP_NAME",
-        -33: "INVALID_OBJECT_NAME",
-        -34: "INVALID_ROBOT_STATE",
-        -35: "INVALID_LINK_NAME",
-        -36: "NO_IK_SOLUTION",
+        -12: "GOAL_IN_COLLISION",
+        -13: "GOAL_VIOLATES_PATH_CONSTRAINTS",
+        -14: "GOAL_CONSTRAINTS_VIOLATED",
+        -15: "INVALID_GROUP_NAME",
+        -16: "INVALID_GOAL_CONSTRAINTS",
+        -17: "INVALID_ROBOT_STATE",
+        -18: "INVALID_LINK_NAME",
+        -19: "INVALID_OBJECT_NAME",
+        -21: "FRAME_TRANSFORM_FAILURE",
+        -22: "COLLISION_CHECKING_UNAVAILABLE",
+        -23: "ROBOT_STATE_STALE",
+        -24: "SENSOR_INFO_STALE",
+        -25: "COMMUNICATION_FAILURE",
+        -26: "START_STATE_INVALID",
+        -27: "GOAL_STATE_INVALID",
+        -28: "UNRECOGNIZED_GOAL_TYPE",
+        -29: "CRASH",
+        -30: "ABORT",
+        -31: "NO_IK_SOLUTION",
     }
 
     def __init__(self):
@@ -412,8 +412,10 @@ class JoyArmNode(Node):
         # Don't set pipeline_id or planner_id to use defaults
 
         # Set workspace parameters (required for some planners)
+        now = self.get_clock().now().to_msg()
         request.workspace_parameters = WorkspaceParameters()
         request.workspace_parameters.header.frame_id = self.PLANNING_FRAME
+        request.workspace_parameters.header.stamp = now
         request.workspace_parameters.min_corner.x = -1.0
         request.workspace_parameters.min_corner.y = -1.0
         request.workspace_parameters.min_corner.z = -1.0
@@ -427,6 +429,7 @@ class JoyArmNode(Node):
         # Position constraint
         position_constraint = PositionConstraint()
         position_constraint.header.frame_id = self.PLANNING_FRAME
+        position_constraint.header.stamp = now
         position_constraint.link_name = self.EE_FRAME
         position_constraint.weight = 1.0
 
@@ -445,6 +448,7 @@ class JoyArmNode(Node):
         # Orientation constraint
         orientation_constraint = OrientationConstraint()
         orientation_constraint.header.frame_id = self.PLANNING_FRAME
+        orientation_constraint.header.stamp = now
         orientation_constraint.link_name = self.EE_FRAME
         orientation_constraint.orientation = target_pose.orientation
         orientation_constraint.absolute_x_axis_tolerance = 0.5
@@ -455,9 +459,7 @@ class JoyArmNode(Node):
 
         request.goal_constraints.append(constraints)
 
-        # Start state: use is_diff=True to indicate "use current state"
-        request.start_state = RobotState()
-        request.start_state.is_diff = True
+        # Don't set start_state - MoveIt will use current robot state by default
 
         goal_msg.request = request
 
