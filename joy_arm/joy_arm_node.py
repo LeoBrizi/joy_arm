@@ -159,8 +159,16 @@ class JoyArmNode(Node):
         self.destroy_subscription(self.tf_listener.tf_static_sub)
 
         # Create new subscriptions with namespaced topics
-        # Only use manipulators TF - it contains the full tree including robot base and arm
-        # Using both /tf and /manipulators/tf causes disconnected tree errors
+        # - manipulators/tf_static: robot base static transforms + arm mounting
+        # - manipulators/tf: wheel odometry
+        # - tf: arm joint transforms (dynamic)
+        self.tf_static_sub_manip = self.create_subscription(
+            TFMessage,
+            f"/{self.NAMESPACE}/manipulators/tf_static",
+            self.tf_listener.static_callback,
+            tf_static_qos,
+            callback_group=self.tf_listener.group
+        )
         self.tf_sub_manip = self.create_subscription(
             TFMessage,
             f"/{self.NAMESPACE}/manipulators/tf",
@@ -168,11 +176,12 @@ class JoyArmNode(Node):
             tf_qos,
             callback_group=self.tf_listener.group
         )
-        self.tf_static_sub_manip = self.create_subscription(
+        # Arm joint transforms are on /tf (not manipulators)
+        self.tf_sub_robot = self.create_subscription(
             TFMessage,
-            f"/{self.NAMESPACE}/manipulators/tf_static",
-            self.tf_listener.static_callback,
-            tf_static_qos,
+            f"/{self.NAMESPACE}/tf",
+            self.tf_listener.callback,
+            tf_qos,
             callback_group=self.tf_listener.group
         )
 
