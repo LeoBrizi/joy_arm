@@ -169,7 +169,7 @@ class JoyArmNode(Node):
         self.tf_static_sub_robot = self.create_subscription(
             TFMessage,
             f"/{self.NAMESPACE}/tf_static",
-            self.tf_listener.callback_static,
+            self.tf_listener.static_callback,
             tf_static_qos
         )
         self.tf_sub_manip = self.create_subscription(
@@ -181,7 +181,7 @@ class JoyArmNode(Node):
         self.tf_static_sub_manip = self.create_subscription(
             TFMessage,
             f"/{self.NAMESPACE}/manipulators/tf_static",
-            self.tf_listener.callback_static,
+            self.tf_listener.static_callback,
             tf_static_qos
         )
 
