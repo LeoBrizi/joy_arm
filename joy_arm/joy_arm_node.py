@@ -31,7 +31,10 @@ from moveit_msgs.msg import (
     MotionPlanRequest,
     PlanningOptions,
     RobotState,
+    PositionIKRequest,
 )
+from moveit_msgs.srv import GetPositionIK
+from geometry_msgs.msg import PoseStamped
 from shape_msgs.msg import SolidPrimitive
 from tf2_msgs.msg import TFMessage
 
@@ -156,6 +159,13 @@ class JoyArmNode(Node):
             self,
             MoveGroup,
             self.MOVE_ACTION,
+            callback_group=self.cb_group
+        )
+
+        # IK service client (to compute joint values from Cartesian poses)
+        self.ik_client = self.create_client(
+            GetPositionIK,
+            f"/{self.NAMESPACE}/compute_ik",
             callback_group=self.cb_group
         )
 
@@ -388,69 +398,85 @@ class JoyArmNode(Node):
         return target_pose
 
     def send_ik_goal(self, target_pose: Pose):
-        """Send IK goal to MoveGroup action."""
+        """Send IK goal to MoveGroup action using joint constraints.
+
+        Since MoveIt's move_group doesn't have joint_states subscription,
+        we use the compute_ik service to get joint values and send joint
+        constraints (like the gripper does, which works).
+        """
         if not self.move_action_client.wait_for_server(timeout_sec=0.1):
             self.get_logger().warning("MoveGroup action server not available")
             return
 
+        if not self.ik_client.service_is_ready():
+            self.get_logger().warning("IK service not available")
+            return
+
         self.goal_in_progress = True
 
-        # Build the goal
+        # First, call IK service to get joint values
+        ik_request = GetPositionIK.Request()
+        ik_request.ik_request.group_name = self.ARM_GROUP
+        ik_request.ik_request.avoid_collisions = True
+
+        # Set target pose
+        pose_stamped = PoseStamped()
+        pose_stamped.header.frame_id = self.PLANNING_FRAME
+        pose_stamped.header.stamp = self.get_clock().now().to_msg()
+        pose_stamped.pose = target_pose
+        ik_request.ik_request.pose_stamped = pose_stamped
+
+        # Call IK service synchronously (with timeout)
+        try:
+            future = self.ik_client.call_async(ik_request)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=0.5)
+
+            if not future.done():
+                self.get_logger().warning("IK service call timed out")
+                self.goal_in_progress = False
+                return
+
+            ik_response = future.result()
+            if ik_response.error_code.val != 1:  # SUCCESS = 1
+                error_name = self.ERROR_CODES.get(
+                    ik_response.error_code.val,
+                    f"UNKNOWN({ik_response.error_code.val})"
+                )
+                self.get_logger().info(f"IK failed: {error_name}")
+                self.goal_in_progress = False
+                return
+
+        except Exception as e:
+            self.get_logger().error(f"IK service call failed: {e}")
+            self.goal_in_progress = False
+            return
+
+        # Extract joint names and positions from IK solution
+        joint_names = ik_response.solution.joint_state.name
+        joint_positions = ik_response.solution.joint_state.position
+
+        # Build MoveGroup goal with joint constraints (like gripper)
         goal_msg = MoveGroup.Goal()
+        goal_msg.request.group_name = self.ARM_GROUP
+        goal_msg.request.num_planning_attempts = 1
+        goal_msg.request.allowed_planning_time = 1.0
+        goal_msg.request.max_velocity_scaling_factor = self.max_velocity_scaling
+        goal_msg.request.max_acceleration_scaling_factor = self.max_acceleration_scaling
 
-        # Motion plan request
-        request = MotionPlanRequest()
-        request.group_name = self.ARM_GROUP
-        request.num_planning_attempts = 1
-        request.allowed_planning_time = 1.0
-        request.max_velocity_scaling_factor = self.max_velocity_scaling
-        request.max_acceleration_scaling_factor = self.max_acceleration_scaling
+        # Create joint constraints for each joint
+        goal_constraints = Constraints()
+        for name, position in zip(joint_names, joint_positions):
+            # Only include arm joints (filter out gripper if present)
+            if 'gripper' not in name.lower():
+                jc = JointConstraint()
+                jc.joint_name = name
+                jc.position = position
+                jc.tolerance_above = 0.01
+                jc.tolerance_below = 0.01
+                jc.weight = 1.0
+                goal_constraints.joint_constraints.append(jc)
 
-        # Let MoveIt use its default configured planner
-        # Don't set pipeline_id or planner_id to use defaults
-
-        now = self.get_clock().now().to_msg()
-
-        # Create goal constraints
-        constraints = Constraints()
-
-        # Position constraint
-        position_constraint = PositionConstraint()
-        position_constraint.header.frame_id = self.PLANNING_FRAME
-        position_constraint.header.stamp = now
-        position_constraint.link_name = self.EE_FRAME
-        position_constraint.weight = 1.0
-
-        # Define target position inside constraint region
-        target_pose_for_region = Pose()
-        target_pose_for_region.position = target_pose.position
-        target_pose_for_region.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-
-        position_constraint.constraint_region.primitive_poses.append(target_pose_for_region)
-        position_constraint.constraint_region.primitives.append(
-            SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.02])  # 2cm tolerance
-        )
-
-        constraints.position_constraints.append(position_constraint)
-
-        # Orientation constraint
-        orientation_constraint = OrientationConstraint()
-        orientation_constraint.header.frame_id = self.PLANNING_FRAME
-        orientation_constraint.header.stamp = now
-        orientation_constraint.link_name = self.EE_FRAME
-        orientation_constraint.orientation = target_pose.orientation
-        orientation_constraint.absolute_x_axis_tolerance = 0.5
-        orientation_constraint.absolute_y_axis_tolerance = 0.5
-        orientation_constraint.absolute_z_axis_tolerance = 0.5
-        orientation_constraint.weight = 1.0
-        constraints.orientation_constraints.append(orientation_constraint)
-
-        request.goal_constraints.append(constraints)
-
-        # Don't set start_state - let MoveIt use its current monitored state
-        # (same as gripper code which works)
-
-        goal_msg.request = request
+        goal_msg.request.goal_constraints.append(goal_constraints)
 
         # Planning options
         goal_msg.planning_options = PlanningOptions()
@@ -459,7 +485,7 @@ class JoyArmNode(Node):
 
         # Send goal asynchronously
         self.get_logger().info(
-            f"Sending IK goal: pos=({target_pose.position.x:.3f}, "
+            f"Sending joint goal: pos=({target_pose.position.x:.3f}, "
             f"{target_pose.position.y:.3f}, {target_pose.position.z:.3f})")
         future = self.move_action_client.send_goal_async(
             goal_msg,
