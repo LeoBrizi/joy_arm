@@ -326,38 +326,8 @@ class JoyArmNode(Node):
         if np.allclose(self.joy_linear, 0) and np.allclose(self.joy_angular, 0):
             return
 
-        # Skip if a goal is already in progress
-        if self.goal_in_progress:
-            return
-
-        # Get current pose
-        current_pose = self.get_current_pose()
-        if current_pose is None:
-            return
-
-        # Log current pose once for debugging
-        if not hasattr(self, '_pose_logged'):
-            self.get_logger().info(
-                f"Current EE pose: pos=({current_pose.position.x:.3f}, {current_pose.position.y:.3f}, "
-                f"{current_pose.position.z:.3f}), orient=({current_pose.orientation.x:.3f}, "
-                f"{current_pose.orientation.y:.3f}, {current_pose.orientation.z:.3f}, "
-                f"{current_pose.orientation.w:.3f})"
-            )
-            self._pose_logged = True
-
-        # Compute delta from joystick (in EE frame)
-        dt = 1.0 / self.control_rate
-        delta_pos_ee = self.joy_linear * self.linear_scale * dt
-        delta_rot = self.joy_angular * self.angular_scale * dt
-
-        # Transform position delta from EE frame to base frame
-        delta_pos_base = self.transform_velocity_to_base(delta_pos_ee)
-
-        # Compute target pose
-        target_pose = self.apply_delta(current_pose, delta_pos_base, delta_rot)
-
-        # Send goal
-        self.send_ik_goal(target_pose)
+        # Send joint commands directly (send_ik_goal reads joy_linear/joy_angular)
+        self.send_joint_command()
 
     def get_current_pose(self) -> Pose:
         """Get current end-effector pose from TF."""
@@ -441,122 +411,55 @@ class JoyArmNode(Node):
 
         return target_pose
 
-    def send_ik_goal(self, target_pose: Pose):
-        """Send Cartesian path goal using compute_cartesian_path service.
+    def send_joint_command(self):
+        """Send joint trajectory directly to controller (bypasses MoveIt).
 
-        This is more robust for incremental movements than IK + MoveGroup.
+        Uses simple joint-space velocity control based on joystick input.
+        Maps: X->J1, Y->J2, Z->J3, Roll->J4, Pitch->J5
         """
-        if not self.cartesian_client.service_is_ready():
-            self.get_logger().warning("Cartesian path service not available")
-            return
-
-        if not self.move_action_client.wait_for_server(timeout_sec=0.1):
-            self.get_logger().warning("MoveGroup action server not available")
-            return
-
-        # Check if we have current joint state
         if self.current_joint_state is None:
             self.get_logger().warning("No joint state received yet")
             return
 
-        self.goal_in_progress = True
+        # Get current joint positions
+        current_positions = list(self.current_joint_state.position)
+        joint_names = list(self.current_joint_state.name)
 
-        # Build Cartesian path request
-        request = GetCartesianPath.Request()
-        request.header.frame_id = self.PLANNING_FRAME
-        request.header.stamp = self.get_clock().now().to_msg()
-        request.group_name = self.ARM_GROUP
-        request.link_name = self.EE_FRAME
-
-        # Start from current joint state
-        request.start_state.joint_state = self.current_joint_state
-        request.start_state.is_diff = False
-
-        # Target waypoint (just the target pose)
-        request.waypoints = [target_pose]
-
-        # Path parameters - be permissive
-        request.max_step = 0.05  # 5cm resolution
-        request.jump_threshold = 0.0  # Disable jump detection
-        request.avoid_collisions = False  # Don't check collisions for speed
-
-        self.get_logger().info(
-            f"Cartesian path: pos=({target_pose.position.x:.3f}, "
-            f"{target_pose.position.y:.3f}, {target_pose.position.z:.3f})")
-
-        # Call service
-        try:
-            future = self.cartesian_client.call_async(request)
-            rclpy.spin_until_future_complete(self, future, timeout_sec=0.5)
-
-            if not future.done():
-                self.get_logger().warning("Cartesian path service timed out")
-                self.goal_in_progress = False
-                return
-
-            response = future.result()
-
-            if response.fraction < 0.9:  # Need at least 90% of path
-                self.get_logger().info(f"Cartesian path incomplete: {response.fraction*100:.0f}%")
-                self.goal_in_progress = False
-                return
-
-            if response.error_code.val != 1:  # SUCCESS
-                error_name = self.ERROR_CODES.get(
-                    response.error_code.val,
-                    f"UNKNOWN({response.error_code.val})"
-                )
-                self.get_logger().info(f"Cartesian path failed: {error_name}")
-                self.goal_in_progress = False
-                return
-
-        except Exception as e:
-            self.get_logger().error(f"Cartesian path failed: {e}")
-            self.goal_in_progress = False
+        if len(current_positions) < 6:
+            self.get_logger().warning("Not enough joints in state")
             return
 
-        # Extract final joint positions from trajectory
-        if not response.solution.joint_trajectory.points:
-            self.get_logger().warning("Empty trajectory")
-            self.goal_in_progress = False
-            return
+        # Compute joint deltas from joystick (simple mapping)
+        dt = 1.0 / self.control_rate
+        joint_scale = 0.5  # rad/s per unit joystick
 
-        joint_names = response.solution.joint_trajectory.joint_names
-        final_point = response.solution.joint_trajectory.points[-1]
-        joint_positions = final_point.positions
+        # Map joystick axes to joints:
+        # joy_linear[0] (X) -> joint 1 (base rotation)
+        # joy_linear[1] (Y) -> joint 2 (shoulder)
+        # joy_linear[2] (Z) -> joint 3 (elbow)
+        # joy_angular[0] (Roll) -> joint 4 (wrist 1)
+        # joy_angular[1] (Pitch) -> joint 5 (wrist 2)
+        target_positions = current_positions.copy()
+        target_positions[0] += self.joy_linear[0] * joint_scale * dt
+        target_positions[1] += self.joy_linear[1] * joint_scale * dt
+        target_positions[2] += self.joy_linear[2] * joint_scale * dt
+        target_positions[3] += self.joy_angular[0] * joint_scale * dt
+        target_positions[4] += self.joy_angular[1] * joint_scale * dt
 
-        # Build MoveGroup goal with joint constraints
-        goal_msg = MoveGroup.Goal()
-        goal_msg.request.group_name = self.ARM_GROUP
-        goal_msg.request.num_planning_attempts = 1
-        goal_msg.request.allowed_planning_time = 1.0
-        goal_msg.request.max_velocity_scaling_factor = self.max_velocity_scaling
-        goal_msg.request.max_acceleration_scaling_factor = self.max_acceleration_scaling
+        # Build trajectory message
+        traj = JointTrajectory()
+        traj.header.stamp = self.get_clock().now().to_msg()
+        traj.joint_names = joint_names
 
-        # Create joint constraints
-        goal_constraints = Constraints()
-        for name, position in zip(joint_names, joint_positions):
-            jc = JointConstraint()
-            jc.joint_name = name
-            jc.position = position
-            jc.tolerance_above = 0.05  # 5% tolerance
-            jc.tolerance_below = 0.05
-            jc.weight = 1.0
-            goal_constraints.joint_constraints.append(jc)
+        # Single point trajectory
+        point = JointTrajectoryPoint()
+        point.positions = target_positions
+        point.time_from_start = Duration(sec=0, nanosec=int(dt * 1e9))
 
-        goal_msg.request.goal_constraints.append(goal_constraints)
+        traj.points = [point]
 
-        goal_msg.planning_options = PlanningOptions()
-        goal_msg.planning_options.plan_only = False
-        goal_msg.planning_options.replan = False
-
-        # Send goal
-        self.get_logger().info("Sending joint goal from Cartesian path")
-        future = self.move_action_client.send_goal_async(
-            goal_msg,
-            feedback_callback=self._move_feedback_callback
-        )
-        future.add_done_callback(self._move_goal_response_callback)
+        # Publish directly to controller
+        self.arm_cmd_pub.publish(traj)
 
     def _move_goal_response_callback(self, future):
         """Handle MoveGroup goal response."""
