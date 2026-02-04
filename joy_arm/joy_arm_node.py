@@ -31,7 +31,9 @@ from moveit_msgs.msg import (
     MotionPlanRequest,
     PlanningOptions,
     RobotState,
+    WorkspaceParameters,
 )
+from std_msgs.msg import Header
 from shape_msgs.msg import SolidPrimitive
 from tf2_msgs.msg import TFMessage
 
@@ -72,6 +74,7 @@ class JoyArmNode(Node):
 
     # MoveIt error code mapping
     ERROR_CODES = {
+        0: "UNDEFINED/CANCELLED",
         1: "SUCCESS",
         99999: "FAILURE",
         -1: "PLANNING_FAILED",
@@ -168,6 +171,8 @@ class JoyArmNode(Node):
         self.get_logger().info(f"JoyArmNode initialized")
         self.get_logger().info(f"  Joy topic: {self.JOY_TOPIC}")
         self.get_logger().info(f"  Move action: {self.MOVE_ACTION}")
+        self.get_logger().info(f"  Arm group: {self.ARM_GROUP}")
+        self.get_logger().info(f"  EE link: {self.EE_FRAME}")
         self.get_logger().info(f"  Control rate: {self.control_rate} Hz")
         self.get_logger().info(f"  Enable: axes[{self.ENABLE_AXIS}] == -1")
 
@@ -390,13 +395,6 @@ class JoyArmNode(Node):
             self.get_logger().warning("MoveGroup action server not available")
             return
 
-        # Cancel previous goal if still running
-        if self.current_goal_handle is not None:
-            try:
-                self.current_goal_handle.cancel_goal_async()
-            except Exception:
-                pass
-
         self.goal_in_progress = True
 
         # Build the goal
@@ -410,10 +408,18 @@ class JoyArmNode(Node):
         request.max_velocity_scaling_factor = self.max_velocity_scaling
         request.max_acceleration_scaling_factor = self.max_acceleration_scaling
 
-        # Use OMPL planner (default, more compatible with constraint-based goals)
-        # Note: Pilz planner ("pilz_industrial_motion_planner") requires different goal format
-        request.pipeline_id = "ompl"
-        request.planner_id = "RRTConnect"
+        # Let MoveIt use its default configured planner
+        # Don't set pipeline_id or planner_id to use defaults
+
+        # Set workspace parameters (required for some planners)
+        request.workspace_parameters = WorkspaceParameters()
+        request.workspace_parameters.header.frame_id = self.PLANNING_FRAME
+        request.workspace_parameters.min_corner.x = -1.0
+        request.workspace_parameters.min_corner.y = -1.0
+        request.workspace_parameters.min_corner.z = -1.0
+        request.workspace_parameters.max_corner.x = 1.0
+        request.workspace_parameters.max_corner.y = 1.0
+        request.workspace_parameters.max_corner.z = 1.0
 
         # Create goal constraints
         constraints = Constraints()
@@ -491,14 +497,19 @@ class JoyArmNode(Node):
         self.goal_in_progress = False
         self.current_goal_handle = None
 
-        result = future.result()
-        error_code = result.result.error_code.val
-        error_name = self.ERROR_CODES.get(error_code, f"UNKNOWN({error_code})")
+        try:
+            result = future.result()
+            error_code = result.result.error_code.val
+            error_name = self.ERROR_CODES.get(error_code, f"UNKNOWN({error_code})")
+            status = result.status
 
-        if error_code == 1:  # SUCCESS
-            self.get_logger().info("Move completed successfully")
-        else:
-            self.get_logger().info(f"Move failed: {error_name}")
+            if error_code == 1:  # SUCCESS
+                self.get_logger().info("Move completed successfully")
+            else:
+                # Status: 2=ACTIVE, 4=SUCCEEDED, 5=CANCELED, 6=ABORTED
+                self.get_logger().info(f"Move failed: {error_name} (status={status})")
+        except Exception as e:
+            self.get_logger().error(f"Error getting result: {e}")
 
     def _move_feedback_callback(self, feedback_msg):
         """Handle MoveGroup feedback."""
