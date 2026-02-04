@@ -470,6 +470,7 @@ class JoyArmNode(Node):
 
         # Publish directly to controller
         self.arm_cmd_pub.publish(traj)
+        self.get_logger().info(f"Sent joint cmd: [{', '.join(f'{p:.3f}' for p in target_positions)}]")
 
     def _move_goal_response_callback(self, future):
         """Handle MoveGroup goal response."""
