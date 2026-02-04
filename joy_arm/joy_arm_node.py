@@ -34,8 +34,9 @@ from moveit_msgs.msg import (
     RobotState,
     PositionIKRequest,
 )
-from moveit_msgs.srv import GetPositionIK
+from moveit_msgs.srv import GetPositionIK, GetCartesianPath
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Header
 from shape_msgs.msg import SolidPrimitive
 from tf2_msgs.msg import TFMessage
 
@@ -178,6 +179,13 @@ class JoyArmNode(Node):
         self.ik_client = self.create_client(
             GetPositionIK,
             f"/{self.NAMESPACE}/compute_ik",
+            callback_group=self.cb_group
+        )
+
+        # Cartesian path service (for incremental movements)
+        self.cartesian_client = self.create_client(
+            GetCartesianPath,
+            f"/{self.NAMESPACE}/compute_cartesian_path",
             callback_group=self.cb_group
         )
 
@@ -327,6 +335,16 @@ class JoyArmNode(Node):
         if current_pose is None:
             return
 
+        # Log current pose once for debugging
+        if not hasattr(self, '_pose_logged'):
+            self.get_logger().info(
+                f"Current EE pose: pos=({current_pose.position.x:.3f}, {current_pose.position.y:.3f}, "
+                f"{current_pose.position.z:.3f}), orient=({current_pose.orientation.x:.3f}, "
+                f"{current_pose.orientation.y:.3f}, {current_pose.orientation.z:.3f}, "
+                f"{current_pose.orientation.w:.3f})"
+            )
+            self._pose_logged = True
+
         # Compute delta from joystick (in EE frame)
         dt = 1.0 / self.control_rate
         delta_pos_ee = self.joy_linear * self.linear_scale * dt
@@ -424,82 +442,90 @@ class JoyArmNode(Node):
         return target_pose
 
     def send_ik_goal(self, target_pose: Pose):
-        """Send IK goal to MoveGroup action using joint constraints.
+        """Send Cartesian path goal using compute_cartesian_path service.
 
-        Since MoveIt's move_group doesn't have joint_states subscription,
-        we use the compute_ik service to get joint values and send joint
-        constraints (like the gripper does, which works).
+        This is more robust for incremental movements than IK + MoveGroup.
         """
+        if not self.cartesian_client.service_is_ready():
+            self.get_logger().warning("Cartesian path service not available")
+            return
+
         if not self.move_action_client.wait_for_server(timeout_sec=0.1):
             self.get_logger().warning("MoveGroup action server not available")
             return
 
-        if not self.ik_client.service_is_ready():
-            self.get_logger().warning("IK service not available")
+        # Check if we have current joint state
+        if self.current_joint_state is None:
+            self.get_logger().warning("No joint state received yet")
             return
 
         self.goal_in_progress = True
 
-        # Check if we have current joint state for IK seed
-        if self.current_joint_state is None:
-            self.get_logger().warning("No joint state received yet, cannot compute IK")
-            self.goal_in_progress = False
-            return
+        # Build Cartesian path request
+        request = GetCartesianPath.Request()
+        request.header.frame_id = self.PLANNING_FRAME
+        request.header.stamp = self.get_clock().now().to_msg()
+        request.group_name = self.ARM_GROUP
+        request.link_name = self.EE_FRAME
 
-        # First, call IK service to get joint values
-        ik_request = GetPositionIK.Request()
-        ik_request.ik_request.group_name = self.ARM_GROUP
-        ik_request.ik_request.ik_link_name = self.EE_FRAME  # Specify end effector
-        ik_request.ik_request.avoid_collisions = False  # Don't check collisions for speed
-        ik_request.ik_request.timeout.sec = 0
-        ik_request.ik_request.timeout.nanosec = 100000000  # 100ms timeout
+        # Start from current joint state
+        request.start_state.joint_state = self.current_joint_state
+        request.start_state.is_diff = False
 
-        # Provide current joint state as seed for IK solver
-        ik_request.ik_request.robot_state.joint_state = self.current_joint_state
-        ik_request.ik_request.robot_state.is_diff = False
+        # Target waypoint (just the target pose)
+        request.waypoints = [target_pose]
 
-        # Set target pose
-        pose_stamped = PoseStamped()
-        pose_stamped.header.frame_id = self.PLANNING_FRAME
-        pose_stamped.header.stamp = self.get_clock().now().to_msg()
-        pose_stamped.pose = target_pose
-        ik_request.ik_request.pose_stamped = pose_stamped
+        # Path parameters - be permissive
+        request.max_step = 0.05  # 5cm resolution
+        request.jump_threshold = 0.0  # Disable jump detection
+        request.avoid_collisions = False  # Don't check collisions for speed
 
-        self.get_logger().debug(
-            f"IK request: frame={self.PLANNING_FRAME}, link={self.EE_FRAME}, "
-            f"pos=({target_pose.position.x:.3f}, {target_pose.position.y:.3f}, {target_pose.position.z:.3f})"
-        )
+        self.get_logger().info(
+            f"Cartesian path: pos=({target_pose.position.x:.3f}, "
+            f"{target_pose.position.y:.3f}, {target_pose.position.z:.3f})")
 
-        # Call IK service synchronously (with timeout)
+        # Call service
         try:
-            future = self.ik_client.call_async(ik_request)
+            future = self.cartesian_client.call_async(request)
             rclpy.spin_until_future_complete(self, future, timeout_sec=0.5)
 
             if not future.done():
-                self.get_logger().warning("IK service call timed out")
+                self.get_logger().warning("Cartesian path service timed out")
                 self.goal_in_progress = False
                 return
 
-            ik_response = future.result()
-            if ik_response.error_code.val != 1:  # SUCCESS = 1
+            response = future.result()
+
+            if response.fraction < 0.9:  # Need at least 90% of path
+                self.get_logger().info(f"Cartesian path incomplete: {response.fraction*100:.0f}%")
+                self.goal_in_progress = False
+                return
+
+            if response.error_code.val != 1:  # SUCCESS
                 error_name = self.ERROR_CODES.get(
-                    ik_response.error_code.val,
-                    f"UNKNOWN({ik_response.error_code.val})"
+                    response.error_code.val,
+                    f"UNKNOWN({response.error_code.val})"
                 )
-                self.get_logger().info(f"IK failed: {error_name}")
+                self.get_logger().info(f"Cartesian path failed: {error_name}")
                 self.goal_in_progress = False
                 return
 
         except Exception as e:
-            self.get_logger().error(f"IK service call failed: {e}")
+            self.get_logger().error(f"Cartesian path failed: {e}")
             self.goal_in_progress = False
             return
 
-        # Extract joint names and positions from IK solution
-        joint_names = ik_response.solution.joint_state.name
-        joint_positions = ik_response.solution.joint_state.position
+        # Extract final joint positions from trajectory
+        if not response.solution.joint_trajectory.points:
+            self.get_logger().warning("Empty trajectory")
+            self.goal_in_progress = False
+            return
 
-        # Build MoveGroup goal with joint constraints (like gripper)
+        joint_names = response.solution.joint_trajectory.joint_names
+        final_point = response.solution.joint_trajectory.points[-1]
+        joint_positions = final_point.positions
+
+        # Build MoveGroup goal with joint constraints
         goal_msg = MoveGroup.Goal()
         goal_msg.request.group_name = self.ARM_GROUP
         goal_msg.request.num_planning_attempts = 1
@@ -507,30 +533,25 @@ class JoyArmNode(Node):
         goal_msg.request.max_velocity_scaling_factor = self.max_velocity_scaling
         goal_msg.request.max_acceleration_scaling_factor = self.max_acceleration_scaling
 
-        # Create joint constraints for each joint
+        # Create joint constraints
         goal_constraints = Constraints()
         for name, position in zip(joint_names, joint_positions):
-            # Only include arm joints (filter out gripper if present)
-            if 'gripper' not in name.lower():
-                jc = JointConstraint()
-                jc.joint_name = name
-                jc.position = position
-                jc.tolerance_above = 0.01
-                jc.tolerance_below = 0.01
-                jc.weight = 1.0
-                goal_constraints.joint_constraints.append(jc)
+            jc = JointConstraint()
+            jc.joint_name = name
+            jc.position = position
+            jc.tolerance_above = 0.05  # 5% tolerance
+            jc.tolerance_below = 0.05
+            jc.weight = 1.0
+            goal_constraints.joint_constraints.append(jc)
 
         goal_msg.request.goal_constraints.append(goal_constraints)
 
-        # Planning options
         goal_msg.planning_options = PlanningOptions()
         goal_msg.planning_options.plan_only = False
         goal_msg.planning_options.replan = False
 
-        # Send goal asynchronously
-        self.get_logger().info(
-            f"Sending joint goal: pos=({target_pose.position.x:.3f}, "
-            f"{target_pose.position.y:.3f}, {target_pose.position.z:.3f})")
+        # Send goal
+        self.get_logger().info("Sending joint goal from Cartesian path")
         future = self.move_action_client.send_goal_async(
             goal_msg,
             feedback_callback=self._move_feedback_callback
