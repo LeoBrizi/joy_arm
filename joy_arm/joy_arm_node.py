@@ -55,6 +55,7 @@ class JoyArmNode(Node):
     JOY_TOPIC = f"/{NAMESPACE}/joy_teleop/joy"
     MOVE_ACTION = f"/{NAMESPACE}/move_action"
     ARM_STATE_TOPIC = f"/{NAMESPACE}/manipulators/arm_0_joint_trajectory_controller/state"
+    ARM_CMD_TOPIC = f"/{NAMESPACE}/manipulators/arm_0_joint_trajectory_controller/joint_trajectory"
 
     # Frame names
     BASE_FRAME = "arm_0_base_link"
@@ -167,6 +168,13 @@ class JoyArmNode(Node):
             self.arm_state_callback,
             10,
             callback_group=self.cb_group
+        )
+
+        # Publisher for direct joint trajectory control (bypasses MoveIt)
+        self.arm_cmd_pub = self.create_publisher(
+            JointTrajectory,
+            self.ARM_CMD_TOPIC,
+            10
         )
 
         # Action client for MoveGroup (used for both arm and gripper)
