@@ -39,6 +39,8 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Header
 from shape_msgs.msg import SolidPrimitive
 from tf2_msgs.msg import TFMessage
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from builtin_interfaces.msg import Duration
 
 import tf2_ros
 from scipy.spatial.transform import Rotation as R
