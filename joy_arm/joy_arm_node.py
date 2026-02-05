@@ -460,7 +460,8 @@ class JoyArmNode(Node):
 
         # Compute joint deltas from joystick (simple mapping)
         dt = 1.0 / self.control_rate
-        joint_scale = 0.15  # rad/s per unit joystick (low for smooth motion)
+        joint_scale = 0.15  # rad/s for base joints
+        wrist_scale = 0.05  # rad/s for wrist joints (much smaller - tighter limits)
 
         # Map joystick axes to joints:
         # joy_linear[0] (X) -> joint 1 (base rotation)
@@ -473,8 +474,8 @@ class JoyArmNode(Node):
         target_positions[0] += self.joy_linear[0] * joint_scale * dt
         target_positions[1] += self.joy_linear[1] * joint_scale * dt
         target_positions[2] += self.joy_linear[2] * joint_scale * dt
-        target_positions[3] += self.joy_angular[0] * joint_scale * dt
-        target_positions[4] += self.joy_angular[1] * joint_scale * dt
+        target_positions[3] += self.joy_angular[0] * wrist_scale * dt
+        target_positions[4] += self.joy_angular[1] * wrist_scale * dt
 
         # Build trajectory message
         traj = JointTrajectory()
