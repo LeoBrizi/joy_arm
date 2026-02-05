@@ -482,11 +482,11 @@ class JoyArmNode(Node):
         traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = joint_names
 
-        # Single point trajectory - time matches control period
+        # Single point trajectory - use longer time to avoid velocity limits
         point = JointTrajectoryPoint()
         point.positions = target_positions
         point.velocities = [0.0] * len(current_positions)  # Zero velocity = stop at position
-        point.time_from_start = Duration(sec=0, nanosec=int(dt * 1e9))  # Match control rate
+        point.time_from_start = Duration(sec=0, nanosec=200_000_000)  # 200ms - allows lower velocities
 
         traj.points = [point]
 
