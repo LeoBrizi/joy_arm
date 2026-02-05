@@ -461,7 +461,7 @@ class JoyArmNode(Node):
         # Compute joint deltas from joystick (simple mapping)
         dt = 1.0 / self.control_rate
         joint_scale = 0.15  # rad/s for base joints
-        wrist_scale = 0.05  # rad/s for wrist joints (much smaller - tighter limits)
+        wrist_scale = 0.02  # rad/s for wrist joints (very small - tight limits)
 
         # Map joystick axes to joints:
         # joy_linear[0] (X) -> joint 1 (base rotation)
