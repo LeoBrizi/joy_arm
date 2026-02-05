@@ -460,7 +460,7 @@ class JoyArmNode(Node):
 
         # Compute joint deltas from joystick (simple mapping)
         dt = 1.0 / self.control_rate
-        joint_scale = 0.3  # rad/s per unit joystick (reduced for safety)
+        joint_scale = 0.15  # rad/s per unit joystick (low for smooth motion)
 
         # Map joystick axes to joints:
         # joy_linear[0] (X) -> joint 1 (base rotation)
@@ -469,7 +469,6 @@ class JoyArmNode(Node):
         # joy_angular[0] (Roll) -> joint 4 (wrist 1)
         # joy_angular[1] (Pitch) -> joint 5 (wrist 2)
         target_positions = current_positions.copy()
-        target_velocities = [0.0] * len(current_positions)
 
         target_positions[0] += self.joy_linear[0] * joint_scale * dt
         target_positions[1] += self.joy_linear[1] * joint_scale * dt
@@ -477,23 +476,16 @@ class JoyArmNode(Node):
         target_positions[3] += self.joy_angular[0] * joint_scale * dt
         target_positions[4] += self.joy_angular[1] * joint_scale * dt
 
-        # Set velocities for smooth motion
-        target_velocities[0] = self.joy_linear[0] * joint_scale
-        target_velocities[1] = self.joy_linear[1] * joint_scale
-        target_velocities[2] = self.joy_linear[2] * joint_scale
-        target_velocities[3] = self.joy_angular[0] * joint_scale
-        target_velocities[4] = self.joy_angular[1] * joint_scale
-
         # Build trajectory message
         traj = JointTrajectory()
         traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = joint_names
 
-        # Single point trajectory with adequate execution time
+        # Single point trajectory - time matches control period
         point = JointTrajectoryPoint()
         point.positions = target_positions
-        point.velocities = target_velocities
-        point.time_from_start = Duration(sec=0, nanosec=150_000_000)  # 150ms
+        point.velocities = [0.0] * len(current_positions)  # Zero velocity = stop at position
+        point.time_from_start = Duration(sec=0, nanosec=int(dt * 1e9))  # Match control rate
 
         traj.points = [point]
 
