@@ -485,8 +485,21 @@ class JoyArmNode(Node):
         # Single point trajectory - use longer time to avoid velocity limits
         point = JointTrajectoryPoint()
         point.positions = target_positions
-        point.velocities = [0.0] * len(current_positions)  # Zero velocity = stop at position
-        point.time_from_start = Duration(sec=0, nanosec=200_000_000)  # 200ms - allows lower velocities
+
+        # Set velocity limits - very low for wrist joints to avoid faults
+        target_velocities = [0.0] * len(current_positions)
+        # Only set non-zero velocities in direction of motion, clamped low
+        max_base_vel = 0.1  # rad/s for base joints
+        max_wrist_vel = 0.02  # rad/s for wrist joints (very conservative)
+
+        target_velocities[0] = np.clip(self.joy_linear[0] * joint_scale, -max_base_vel, max_base_vel)
+        target_velocities[1] = np.clip(self.joy_linear[1] * joint_scale, -max_base_vel, max_base_vel)
+        target_velocities[2] = np.clip(self.joy_linear[2] * joint_scale, -max_base_vel, max_base_vel)
+        target_velocities[3] = np.clip(self.joy_angular[0] * wrist_scale, -max_wrist_vel, max_wrist_vel)
+        target_velocities[4] = np.clip(self.joy_angular[1] * wrist_scale, -max_wrist_vel, max_wrist_vel)
+
+        point.velocities = target_velocities
+        point.time_from_start = Duration(sec=0, nanosec=200_000_000)  # 200ms
 
         traj.points = [point]
 
