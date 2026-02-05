@@ -274,6 +274,13 @@ class JoyArmNode(Node):
         else:
             self.is_enabled = False
 
+        # Debug: log joystick state once when enabled
+        if self.is_enabled and not hasattr(self, '_logged_joy_debug'):
+            self._logged_joy_debug = True
+            self.get_logger().info(f"Joystick: {len(msg.axes)} axes, {len(msg.buttons)} buttons")
+            self.get_logger().info(f"Axes: {[f'{a:.2f}' for a in msg.axes]}")
+            self.get_logger().info(f"Buttons: {list(msg.buttons)}")
+
         if self.is_enabled:
             # Read position axes with deadzone (X and Y from sticks)
             if len(msg.axes) > max(self.X_AXIS, self.Y_AXIS):
@@ -453,7 +460,7 @@ class JoyArmNode(Node):
 
         # Compute joint deltas from joystick (simple mapping)
         dt = 1.0 / self.control_rate
-        joint_scale = 0.5  # rad/s per unit joystick
+        joint_scale = 0.3  # rad/s per unit joystick (reduced for safety)
 
         # Map joystick axes to joints:
         # joy_linear[0] (X) -> joint 1 (base rotation)
@@ -462,27 +469,40 @@ class JoyArmNode(Node):
         # joy_angular[0] (Roll) -> joint 4 (wrist 1)
         # joy_angular[1] (Pitch) -> joint 5 (wrist 2)
         target_positions = current_positions.copy()
+        target_velocities = [0.0] * len(current_positions)
+
         target_positions[0] += self.joy_linear[0] * joint_scale * dt
         target_positions[1] += self.joy_linear[1] * joint_scale * dt
         target_positions[2] += self.joy_linear[2] * joint_scale * dt
         target_positions[3] += self.joy_angular[0] * joint_scale * dt
         target_positions[4] += self.joy_angular[1] * joint_scale * dt
 
+        # Set velocities for smooth motion
+        target_velocities[0] = self.joy_linear[0] * joint_scale
+        target_velocities[1] = self.joy_linear[1] * joint_scale
+        target_velocities[2] = self.joy_linear[2] * joint_scale
+        target_velocities[3] = self.joy_angular[0] * joint_scale
+        target_velocities[4] = self.joy_angular[1] * joint_scale
+
         # Build trajectory message
         traj = JointTrajectory()
         traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = joint_names
 
-        # Single point trajectory
+        # Single point trajectory with adequate execution time
         point = JointTrajectoryPoint()
         point.positions = target_positions
-        point.time_from_start = Duration(sec=0, nanosec=int(dt * 1e9))
+        point.velocities = target_velocities
+        point.time_from_start = Duration(sec=0, nanosec=150_000_000)  # 150ms
 
         traj.points = [point]
 
         # Publish directly to controller
         self.arm_cmd_pub.publish(traj)
-        self.get_logger().info(f"Sent joint cmd: [{', '.join(f'{p:.3f}' for p in target_positions)}]")
+        self.get_logger().info(
+            f"Cmd: lin=[{self.joy_linear[0]:.2f},{self.joy_linear[1]:.2f},{self.joy_linear[2]:.2f}] "
+            f"ang=[{self.joy_angular[0]:.2f},{self.joy_angular[1]:.2f}]"
+        )
 
     def _move_goal_response_callback(self, future):
         """Handle MoveGroup goal response."""
