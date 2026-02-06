@@ -264,7 +264,7 @@ class JoyJointNode(Node):
         target_positions[0] += self.joy_joints[0] * joint_scale * dt
         target_positions[1] += self.joy_joints[1] * joint_scale * dt
         target_positions[2] += self.joy_joints[2] * joint_scale * dt
-        target_positions[3] += self.joy_joints[3] * joint_scale * dt
+        target_positions[3] += self.joy_joints[3] * wrist_scale * dt
         target_positions[4] += self.joy_joint5 * wrist_scale * dt
         target_positions[5] += self.joy_joint6 * wrist_scale * dt
 
