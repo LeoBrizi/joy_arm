@@ -17,7 +17,7 @@ def generate_launch_description():
 
     control_rate_arg = DeclareLaunchArgument(
         'control_rate',
-        default_value='50.0',
+        default_value='10.0',
         description='Control loop rate (Hz)'
     )
 
