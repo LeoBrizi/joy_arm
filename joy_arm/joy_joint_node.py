@@ -257,8 +257,8 @@ class JoyJointNode(Node):
             return
 
         dt = 1.0 / self.control_rate
-        joint_scale = 0.15  # rad/s for joints 1-4
-        wrist_scale = 0.02  # rad/s for joints 5-6
+        joint_scale = 0.4  # rad/s for joints 1-4
+        wrist_scale = 0.08  # rad/s for joints 5-6
 
         target_positions = current_positions.copy()
         target_positions[0] += self.joy_joints[0] * joint_scale * dt
