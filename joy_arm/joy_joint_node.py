@@ -169,6 +169,12 @@ class JoyJointNode(Node):
         else:
             self.is_enabled = False
 
+        self.get_logger().info(
+            f"[RAW] enabled={self.is_enabled} "
+            f"axes=[{', '.join(f'{a:.2f}' for a in msg.axes)}] "
+            f"buttons={list(msg.buttons)}"
+        )
+
         if self.is_enabled:
             # Joints 1-4 from stick axes
             if len(msg.axes) > 4:
@@ -272,30 +278,31 @@ class JoyJointNode(Node):
         traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = joint_names
 
-        # Two-point trajectory for smoother interpolation
-        # First point: halfway there at 100ms (ramp up)
-        mid_positions = current_positions.copy()
-        for i in range(len(current_positions)):
-            mid_positions[i] = (current_positions[i] + target_positions[i]) / 2.0
+        point = JointTrajectoryPoint()
+        point.positions = target_positions
+        point.velocities = [0.0] * len(current_positions)
+        point.time_from_start = Duration(sec=0, nanosec=200_000_000)
 
-        point1 = JointTrajectoryPoint()
-        point1.positions = mid_positions
-        point1.velocities = [0.0] * len(current_positions)
-        point1.time_from_start = Duration(sec=0, nanosec=100_000_000)
-
-        # Second point: full target at 200ms
-        point2 = JointTrajectoryPoint()
-        point2.positions = target_positions
-        point2.velocities = [0.0] * len(current_positions)
-        point2.time_from_start = Duration(sec=0, nanosec=200_000_000)
-
-        traj.points = [point1, point2]
+        traj.points = [point]
 
         self.arm_cmd_pub.publish(traj)
+
+        # Debug: joystick input
         self.get_logger().info(
-            f"Cmd: j1-4=[{self.joy_joints[0]:.2f},{self.joy_joints[1]:.2f},"
-            f"{self.joy_joints[2]:.2f},{self.joy_joints[3]:.2f}] "
-            f"j5={self.joy_joint5:.2f} j6={self.joy_joint6:.2f}"
+            f"[JOY] enabled={self.is_enabled} "
+            f"axes=[{self.joy_joints[0]:.3f},{self.joy_joints[1]:.3f},"
+            f"{self.joy_joints[2]:.3f},{self.joy_joints[3]:.3f}] "
+            f"j5={self.joy_joint5:.1f} j6={self.joy_joint6:.1f}"
+        )
+        # Debug: command sent
+        self.get_logger().info(
+            f"[CMD] current=[{', '.join(f'{p:.4f}' for p in current_positions)}]"
+        )
+        self.get_logger().info(
+            f"[CMD] target =[{', '.join(f'{p:.4f}' for p in target_positions)}]"
+        )
+        self.get_logger().info(
+            f"[CMD] delta  =[{', '.join(f'{t-c:.6f}' for t, c in zip(target_positions, current_positions))}]"
         )
 
     def send_gripper_goal(self, position: float):
