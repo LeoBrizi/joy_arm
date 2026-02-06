@@ -91,7 +91,7 @@ class JoyJointNode(Node):
 
         # Declare parameters
         self.declare_parameter('deadzone', 0.1)
-        self.declare_parameter('control_rate', 10.0)  # Hz
+        self.declare_parameter('control_rate', 50.0)  # Hz
         self.declare_parameter('gripper_close_button', 0)
         self.declare_parameter('gripper_open_button', 1)
 
@@ -260,13 +260,18 @@ class JoyJointNode(Node):
         joint_scale = 0.4  # rad/s for joints 1-4
         wrist_scale = 0.08  # rad/s for joints 5-6
 
+        # Compute velocities per joint
+        velocities = [0.0] * len(current_positions)
+        velocities[0] = self.joy_joints[0] * joint_scale
+        velocities[1] = self.joy_joints[1] * joint_scale
+        velocities[2] = self.joy_joints[2] * joint_scale
+        velocities[3] = self.joy_joints[3] * joint_scale
+        velocities[4] = self.joy_joint5 * wrist_scale
+        velocities[5] = self.joy_joint6 * wrist_scale
+
         target_positions = current_positions.copy()
-        target_positions[0] += self.joy_joints[0] * joint_scale * dt
-        target_positions[1] += self.joy_joints[1] * joint_scale * dt
-        target_positions[2] += self.joy_joints[2] * joint_scale * dt
-        target_positions[3] += self.joy_joints[3] * joint_scale * dt
-        target_positions[4] += self.joy_joint5 * wrist_scale * dt
-        target_positions[5] += self.joy_joint6 * wrist_scale * dt
+        for i in range(6):
+            target_positions[i] += velocities[i] * dt
 
         traj = JointTrajectory()
         traj.header.stamp = self.get_clock().now().to_msg()
@@ -274,8 +279,8 @@ class JoyJointNode(Node):
 
         point = JointTrajectoryPoint()
         point.positions = target_positions
-        point.velocities = [0.0] * len(current_positions)
-        point.time_from_start = Duration(sec=0, nanosec=200_000_000)
+        point.velocities = velocities
+        point.time_from_start = Duration(sec=0, nanosec=100_000_000)
 
         traj.points = [point]
 
