@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'joy_arm_node = joy_arm.joy_arm_node:main',
+            'joy_joint_node = joy_arm.joy_joint_node:main',
         ],
     },
 )
