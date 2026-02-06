@@ -8,6 +8,7 @@ Control mapping:
 - axes[1]: Y movement (end-effector frame)
 - axes[3]: Roll
 - axes[4]: Pitch
+- axes[6]: D-pad horizontal -> Joint 6 (left = increase, right = decrease)
 - button[0]: Close gripper
 - button[1]: Open gripper
 - button[-2]: Z up (second to last)
@@ -79,6 +80,7 @@ class JoyArmNode(Node):
     # Z controlled by buttons (axes[2] is a trigger with rest=1, not suitable)
     ROLL_AXIS = 3
     PITCH_AXIS = 4
+    JOINT6_AXIS = 6  # D-pad horizontal -> Joint 6
 
     # MoveIt error code mapping
     ERROR_CODES = {
@@ -142,6 +144,7 @@ class JoyArmNode(Node):
         self.is_enabled = False
         self.joy_linear = np.zeros(3)  # x, y, z velocities
         self.joy_angular = np.zeros(2)  # roll, pitch velocities
+        self.joy_joint6 = 0.0  # D-pad horizontal for joint 6
         self.prev_buttons = []
         self.goal_in_progress = False
         self.current_goal_handle = None
@@ -303,6 +306,10 @@ class JoyArmNode(Node):
                 self.joy_angular[0] = self._apply_deadzone(msg.axes[self.ROLL_AXIS])
                 self.joy_angular[1] = self._apply_deadzone(msg.axes[self.PITCH_AXIS])
 
+            # Read D-pad horizontal for joint 6
+            if len(msg.axes) > self.JOINT6_AXIS:
+                self.joy_joint6 = self._apply_deadzone(msg.axes[self.JOINT6_AXIS])
+
             # Handle gripper buttons (rising edge detection) - only when enabled
             if len(msg.buttons) > max(self.gripper_close_button, self.gripper_open_button):
                 if len(self.prev_buttons) == len(msg.buttons):
@@ -321,6 +328,7 @@ class JoyArmNode(Node):
             # Clear velocities when disabled
             self.joy_linear = np.zeros(3)
             self.joy_angular = np.zeros(2)
+            self.joy_joint6 = 0.0
 
         # Always update prev_buttons for edge detection (outside is_enabled check)
         if len(msg.buttons) > 0:
@@ -352,7 +360,7 @@ class JoyArmNode(Node):
             return
 
         # Skip if no motion commanded
-        if np.allclose(self.joy_linear, 0) and np.allclose(self.joy_angular, 0):
+        if np.allclose(self.joy_linear, 0) and np.allclose(self.joy_angular, 0) and self.joy_joint6 == 0:
             return
 
         # Send joint commands directly (send_ik_goal reads joy_linear/joy_angular)
@@ -444,7 +452,7 @@ class JoyArmNode(Node):
         """Send joint trajectory directly to controller (bypasses MoveIt).
 
         Uses simple joint-space velocity control based on joystick input.
-        Maps: X->J1, Y->J2, Z->J3, Roll->J4, Pitch->J5
+        Maps: X->J1, Y->J2, Z->J3, Roll->J4, Pitch->J5, D-pad H->J6
         """
         if self.current_joint_state is None:
             self.get_logger().warning("No joint state received yet")
@@ -476,6 +484,7 @@ class JoyArmNode(Node):
         target_positions[2] += self.joy_linear[2] * joint_scale * dt
         target_positions[3] += self.joy_angular[0] * wrist_scale * dt
         target_positions[4] += self.joy_angular[1] * wrist_scale * dt
+        target_positions[5] += self.joy_joint6 * wrist_scale * dt
 
         # Build trajectory message
         traj = JointTrajectory()
@@ -497,6 +506,7 @@ class JoyArmNode(Node):
         target_velocities[2] = np.clip(self.joy_linear[2] * joint_scale, -max_base_vel, max_base_vel)
         target_velocities[3] = np.clip(self.joy_angular[0] * wrist_scale, -max_wrist_vel, max_wrist_vel)
         target_velocities[4] = np.clip(self.joy_angular[1] * wrist_scale, -max_wrist_vel, max_wrist_vel)
+        target_velocities[5] = np.clip(self.joy_joint6 * wrist_scale, -max_wrist_vel, max_wrist_vel)
 
         point.velocities = target_velocities
         point.time_from_start = Duration(sec=0, nanosec=200_000_000)  # 200ms
@@ -507,7 +517,8 @@ class JoyArmNode(Node):
         self.arm_cmd_pub.publish(traj)
         self.get_logger().info(
             f"Cmd: lin=[{self.joy_linear[0]:.2f},{self.joy_linear[1]:.2f},{self.joy_linear[2]:.2f}] "
-            f"ang=[{self.joy_angular[0]:.2f},{self.joy_angular[1]:.2f}]"
+            f"ang=[{self.joy_angular[0]:.2f},{self.joy_angular[1]:.2f}] "
+            f"j6={self.joy_joint6:.2f}"
         )
 
     def _move_goal_response_callback(self, future):
