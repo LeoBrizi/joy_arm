@@ -272,12 +272,24 @@ class JoyJointNode(Node):
         traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = joint_names
 
-        point = JointTrajectoryPoint()
-        point.positions = target_positions
-        point.velocities = [0.0] * len(current_positions)
-        point.time_from_start = Duration(sec=0, nanosec=400_000_000)
+        # Two-point trajectory for smoother interpolation
+        # First point: halfway there at 100ms (ramp up)
+        mid_positions = current_positions.copy()
+        for i in range(len(current_positions)):
+            mid_positions[i] = (current_positions[i] + target_positions[i]) / 2.0
 
-        traj.points = [point]
+        point1 = JointTrajectoryPoint()
+        point1.positions = mid_positions
+        point1.velocities = [0.0] * len(current_positions)
+        point1.time_from_start = Duration(sec=0, nanosec=100_000_000)
+
+        # Second point: full target at 200ms
+        point2 = JointTrajectoryPoint()
+        point2.positions = target_positions
+        point2.velocities = [0.0] * len(current_positions)
+        point2.time_from_start = Duration(sec=0, nanosec=200_000_000)
+
+        traj.points = [point1, point2]
 
         self.arm_cmd_pub.publish(traj)
         self.get_logger().info(
