@@ -169,11 +169,11 @@ class JoyJointNode(Node):
         else:
             self.is_enabled = False
 
-        self.get_logger().info(
-            f"[RAW] enabled={self.is_enabled} "
-            f"axes=[{', '.join(f'{a:.2f}' for a in msg.axes)}] "
-            f"buttons={list(msg.buttons)}"
-        )
+        # self.get_logger().info(
+        #     f"[RAW] enabled={self.is_enabled} "
+        #     f"axes=[{', '.join(f'{a:.2f}' for a in msg.axes)}] "
+        #     f"buttons={list(msg.buttons)}"
+        # )
 
         if self.is_enabled:
             # Joints 1-4 from stick axes
@@ -297,12 +297,12 @@ class JoyJointNode(Node):
         self.arm_cmd_pub.publish(traj)
 
         # Debug: joystick input
-        self.get_logger().info(
-            f"[JOY] enabled={self.is_enabled} "
-            f"axes=[{self.joy_joints[0]:.3f},{self.joy_joints[1]:.3f},"
-            f"{self.joy_joints[2]:.3f},{self.joy_joints[3]:.3f}] "
-            f"j5={self.joy_joint5:.1f} j6={self.joy_joint6:.1f}"
-        )
+        # self.get_logger().info(
+        #     f"[JOY] enabled={self.is_enabled} "
+        #     f"axes=[{self.joy_joints[0]:.3f},{self.joy_joints[1]:.3f},"
+        #     f"{self.joy_joints[2]:.3f},{self.joy_joints[3]:.3f}] "
+        #     f"j5={self.joy_joint5:.1f} j6={self.joy_joint6:.1f}"
+        # )
         # Debug: command sent
         self.get_logger().info(
             f"[CMD] current=[{', '.join(f'{p:.4f}' for p in current_positions)}]"
