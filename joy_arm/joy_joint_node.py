@@ -271,8 +271,8 @@ class JoyJointNode(Node):
             return
 
         dt = 1.0 / self.control_rate
-        joint_scale = 0.4   # rad/s for joints 1-3 (base/shoulder/elbow)
-        shoulder_scale = 0.6  # rad/s for joint 4 (wrist 1, tighter limits)
+        joint_scale = 0.8   # rad/s for joints 1-3 (base/shoulder/elbow)
+        shoulder_scale = 0.7  # rad/s for joint 4 (wrist 1, tighter limits)
         wrist_scale = 0.6   # rad/s for joints 5-6 (button-driven)
 
         target_positions = current_positions.copy()
