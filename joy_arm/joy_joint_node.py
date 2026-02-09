@@ -91,7 +91,7 @@ class JoyJointNode(Node):
 
         # Declare parameters
         self.declare_parameter('deadzone', 0.2)
-        self.declare_parameter('control_rate', 1.0)  # Hz
+        self.declare_parameter('control_rate', 10.0)  # Hz
         self.declare_parameter('gripper_close_button', 0)
         self.declare_parameter('gripper_open_button', 1)
 
