@@ -91,7 +91,7 @@ class JoyJointNode(Node):
 
         # Declare parameters
         self.declare_parameter('deadzone', 0.2)
-        self.declare_parameter('control_rate', 50.0)  # Hz
+        self.declare_parameter('control_rate', 60.0)  # Hz
         self.declare_parameter('gripper_close_button', 0)
         self.declare_parameter('gripper_open_button', 1)
 
@@ -272,14 +272,14 @@ class JoyJointNode(Node):
 
         dt = 1.0 / self.control_rate
         joint_scale = 0.4   # rad/s for joints 1-3 (base/shoulder/elbow)
-        wrist4_scale = 0.4  # rad/s for joint 4 (wrist 1, tighter limits)
-        wrist_scale = 0.4   # rad/s for joints 5-6 (button-driven)
+        shoulder_scale = 0.6  # rad/s for joint 4 (wrist 1, tighter limits)
+        wrist_scale = 0.6   # rad/s for joints 5-6 (button-driven)
 
         target_positions = current_positions.copy()
         target_positions[0] += self.joy_joints[0] * joint_scale * dt
         target_positions[1] += self.joy_joints[1] * joint_scale * dt
-        target_positions[2] += self.joy_joints[2] * joint_scale * dt
-        target_positions[3] += self.joy_joints[3] * wrist4_scale * dt
+        target_positions[2] += self.joy_joints[2] * shoulder_scale * dt
+        target_positions[3] += self.joy_joints[3] * shoulder_scale * dt
         target_positions[4] += self.joy_joint5 * wrist_scale * dt
         target_positions[5] += self.joy_joint6 * wrist_scale * dt
 
@@ -290,7 +290,7 @@ class JoyJointNode(Node):
         point = JointTrajectoryPoint()
         point.positions = target_positions
         point.velocities = [0.0] * len(current_positions)
-        point.time_from_start = Duration(sec=0, nanosec=10_000_000)
+        point.time_from_start = Duration(sec=0, nanosec=5_000_000)
 
         traj.points = [point]
 
