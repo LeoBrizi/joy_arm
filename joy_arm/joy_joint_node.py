@@ -283,6 +283,9 @@ class JoyJointNode(Node):
         target_positions[4] += self.joy_joint5 * wrist_scale * dt
         target_positions[5] += self.joy_joint6 * wrist_scale * dt
 
+        if abs(target_positions[3]) > 2.6:
+            target_positions[3] = 2.6 * np.sign(target_positions[3]) 
+
         traj = JointTrajectory()
         traj.header.stamp = self.get_clock().now().to_msg()
         traj.joint_names = joint_names
