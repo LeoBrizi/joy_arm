@@ -186,18 +186,18 @@ class JoyJointNode(Node):
             # Joint 5 from buttons[-2] (positive) and buttons[-1] (negative)
             if len(msg.buttons) >= 2:
                 self.joy_joint5 = float(msg.buttons[-2]) - float(msg.buttons[-1])
-                self.get_logger().info(
-                    f"[BTN] j5: btn[{len(msg.buttons)-2}]={msg.buttons[-2]} "
-                    f"btn[{len(msg.buttons)-1}]={msg.buttons[-1]} -> j5={self.joy_joint5:.1f}"
-                )
+                # self.get_logger().info(
+                #     f"[BTN] j5: btn[{len(msg.buttons)-2}]={msg.buttons[-2]} "
+                #     f"btn[{len(msg.buttons)-1}]={msg.buttons[-1]} -> j5={self.joy_joint5:.1f}"
+                # )
 
             # Joint 6 from buttons[-4] (positive) and buttons[-3] (negative)
             if len(msg.buttons) >= 4:
                 self.joy_joint6 = float(msg.buttons[-4]) - float(msg.buttons[-3])
-                self.get_logger().info(
-                    f"[BTN] j6: btn[{len(msg.buttons)-4}]={msg.buttons[-4]} "
-                    f"btn[{len(msg.buttons)-3}]={msg.buttons[-3]} -> j6={self.joy_joint6:.1f}"
-                )
+                # self.get_logger().info(
+                #     f"[BTN] j6: btn[{len(msg.buttons)-4}]={msg.buttons[-4]} "
+                #     f"btn[{len(msg.buttons)-3}]={msg.buttons[-3]} -> j6={self.joy_joint6:.1f}"
+                # )
 
             # Handle gripper buttons (rising edge detection)
             if len(msg.buttons) > max(self.gripper_close_button, self.gripper_open_button):
