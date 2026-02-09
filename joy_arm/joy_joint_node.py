@@ -290,7 +290,7 @@ class JoyJointNode(Node):
         point = JointTrajectoryPoint()
         point.positions = target_positions
         point.velocities = [0.0] * len(current_positions)
-        point.time_from_start = Duration(sec=0, nanosec=200_000_000)
+        point.time_from_start = Duration(sec=0, nanosec=100_000_000)
 
         traj.points = [point]
 
